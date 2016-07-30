@@ -31,3 +31,9 @@
 # Debug files
 *.dSYM/
 *.su
+
+# DS_Store
+.DS_Store
+
+# Pid files
+*.pid
