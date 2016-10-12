@@ -9,6 +9,7 @@ class SocketServer(handlerClass: Class[_], localAddress: InetSocketAddress) exte
   import Tcp._
   import context.system
 
+  //当server关闭时关闭所有的子Actor
   override val supervisorStrategy = SupervisorStrategy.stoppingStrategy
 
   override def preStart(): Unit = {
@@ -27,18 +28,26 @@ class SocketServer(handlerClass: Class[_], localAddress: InetSocketAddress) exte
 
     case Connected(remote, local) =>
       log.info(s"Received connection from $remote")
-      val handler = context.actorOf(Props(handlerClass, sender(), remote))
+      val handler = context.actorOf(Props(classOf[SocketHandler], sender(), remote, handlerClass))
       sender() ! Register(handler, keepOpenOnPeerClosed = true)
   }
 }
 
-class SocketHandler(connection: ActorRef, remote: InetSocketAddress)
+//SocketHandler使用nack方式，不等对端ack就一直写入数据，仅当写入失败时才重传数据
+class SocketHandler(connection: ActorRef, remote: InetSocketAddress, handlerClass: Class[_])
   extends Actor with ActorLogging {
 
   import Tcp._
   import SocketHandler._
 
   context watch connection
+
+  override val supervisorStrategy = SupervisorStrategy.stoppingStrategy
+
+  override def preStart(): Unit = {
+    val codec = context.actorOf(Props(handlerClass, self))
+    //TODO:告知编解码器，让编解码器watch handler
+  }
 
   def receive = writing
 
@@ -103,9 +112,13 @@ class SocketHandler(connection: ActorRef, remote: InetSocketAddress)
     log.info(s"Transferred $transferred bytes from/to [$remote]")
   }
 
+  //storageOffset是已经发送完的数据，也是写入缓存数据头的偏移
   private var storageOffset = 0
+  //storage缓存数据
   private var storage = Vector.empty[ByteString]
+  //stored缓存字节数
   private var stored = 0L
+  //发送字节数
   private var transferred = 0L
 
   val maxStored = 100000000L
